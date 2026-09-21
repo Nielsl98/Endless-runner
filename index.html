@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Endless Runner Prototype</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#111;touch-action:none;font-family:Arial,sans-serif}
+canvas{display:block}
+#hud{position:fixed;top:12px;left:0;right:0;display:flex;justify-content:space-between;padding:0 16px;color:#fff;font-weight:bold;font-size:20px;text-shadow:0 2px 4px #000;z-index:3}
+#overlay{position:fixed;inset:0;background:#000b;color:#fff;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;z-index:5}
+#overlay h1{font-size:40px;margin:0 0 10px} button{font-size:19px;font-weight:bold;padding:13px 25px;border:0;border-radius:10px}
+#hint{position:fixed;bottom:12px;left:0;right:0;text-align:center;color:#fff9;z-index:3;font-size:14px}
+</style></head><body>
+<div id="hud"><span id="time">01:00</span><span id="score">Score: 0</span><span id="group">👥 1</span></div>
+<div id="hint">Swipe ← → ↑ ↓</div>
+<div id="overlay"><h1 id="title">READY?</h1><p id="sub">3 • 2 • 1 • GO!</p><button id="start">START</button></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.179.1/build/three.min.js"></script>
+<script>
+let scene,camera,renderer,player,running=false,t=60,score=0,n=1,clocks=0;
+let targetX=0,targetZ=0,speed=.18,followers=[],items=[],obstacles=[];
+const lanes=[-4,0,4];
+
+function char(color){
+ const g=new THREE.Group();
+ const b=new THREE.Mesh(new THREE.CapsuleGeometry(.48,.8,4,8),new THREE.MeshStandardMaterial({color})); b.position.y=.8;g.add(b);
+ const h=new THREE.Mesh(new THREE.SphereGeometry(.4,12,10),new THREE.MeshStandardMaterial({color:0xf0bd92}));h.position.y=1.55;g.add(h);
+ return g;
+}
+function clockObj(){
+ const g=new THREE.Group();
+ const c=new THREE.Mesh(new THREE.CylinderGeometry(.55,.55,.16,24),new THREE.MeshStandardMaterial({color:0xf0c52b}));c.rotation.x=Math.PI/2;g.add(c);
+ return g;
+}
+function speedFor(x){return x<5?.18:x<10?.198:x<15?.216:x<20?.234:x<30?.261:x<40?.279:.297}
+function start(){
+ running=true;t=60;score=0;n=1;clocks=0;targetX=0;targetZ=0;player.position.set(0,.65,5);
+ followers.forEach(x=>scene.remove(x));followers=[];items.forEach(x=>scene.remove(x.m));items=[];obstacles.forEach(x=>scene.remove(x));obstacles=[];
+ document.getElementById('overlay').style.display='none';
+}
+function over(reason){
+ if(!running)return;running=false;
+ document.getElementById('title').textContent='GAME OVER';
+ document.getElementById('sub').innerHTML=`Score: <b>${score}</b><br>Characters: ${n}<br>Klokken: ${clocks}<br><br>${reason}`;
+ document.getElementById('start').textContent='OPNIEUW SPELEN';
+ document.getElementById('overlay').style.display='flex';
+}
+function move(dx,dz){if(running){targetX=Math.max(-4,Math.min(4,targetX+dx));targetZ=Math.max(-4,Math.min(4,targetZ+dz))}}
+let sx,sy;
+addEventListener('touchstart',e=>{sx=e.touches[0].clientX;sy=e.touches[0].clientY},{passive:false});
+addEventListener('touchend',e=>{if(!running)return;let dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;if(Math.max(Math.abs(dx),Math.abs(dy))<30)return;if(Math.abs(dx)>Math.abs(dy))move(Math.sign(dx)*4,0);else move(0,Math.sign(dy)*-4)},{passive:false});
+addEventListener('keydown',e=>({ArrowLeft:()=>move(-4,0),ArrowRight:()=>move(4,0),ArrowUp:()=>move(0,-4),ArrowDown:()=>move(0,4)}[e.key]||(()=>{}))());
+
+scene=new THREE.Scene();scene.background=new THREE.Color(0x83b2d0);scene.fog=new THREE.Fog(0x83b2d0,30,130);
+camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,300);renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x556060,2));let sun=new THREE.DirectionalLight(0xffffff,2);sun.position.set(5,12,8);scene.add(sun);
+let ground=new THREE.Mesh(new THREE.PlaneGeometry(30,500),new THREE.MeshStandardMaterial({color:0x6d8b55}));ground.rotation.x=-Math.PI/2;ground.position.z=-220;scene.add(ground);
+let road=new THREE.Mesh(new THREE.PlaneGeometry(12,500),new THREE.MeshStandardMaterial({color:0x4b4b4b}));road.rotation.x=-Math.PI/2;road.position.set(0,.03,-220);scene.add(road);
+player=char(0x242424);player.position.set(0,.65,5);scene.add(player);
+document.getElementById('start').onclick=start;
+
+let last=performance.now();
+function loop(now){
+ requestAnimationFrame(loop);let dt=Math.min((now-last)/1000,.04);last=now;
+ if(running){
+  t-=dt;speed=speedFor(n);player.position.z-=speed*60*dt;
+  player.position.x+=(targetX-player.position.x)*Math.min(1,dt*12);
+  player.position.y+=(.65-player.position.y)*Math.min(1,dt*10);
+  if(Math.random()<dt*.65){let m=Math.random()<.78?char(0x3288ff):clockObj(),type=m.children.length>1?'char':'clock';m.position.set(lanes[Math.floor(Math.random()*3)],.65,player.position.z-60-Math.random()*30);scene.add(m);items.push({m,type})}
+  if(Math.random()<dt*.35){let h=1+Math.random()*1.2,m=new THREE.Mesh(new THREE.BoxGeometry(2.2,h,1.8),new THREE.MeshStandardMaterial({color:0xd64b3c}));m.position.set(lanes[Math.floor(Math.random()*3)],h/2,player.position.z-70-Math.random()*35);scene.add(m);obstacles.push(m)}
+  followers.forEach((f,i)=>{let q=i?followers[i-1]:player;f.position.x+=(q.position.x-f.position.x)*Math.min(1,dt*10);f.position.z+=(q.position.z+.95-f.position.z)*Math.min(1,dt*10)});
+  for(let i=items.length-1;i>=0;i--){let o=items[i],dx=o.m.position.x-player.position.x,dz=o.m.position.z-player.position.z;if(dx*dx+dz*dz<2){if(o.type==='char'){n++;score+=100;let f=char(0x35b56a);f.position.copy(player.position);f.position.z+=.95*followers.length+1;scene.add(f);followers.push(f)}else{clocks++;score+=250;t=Math.min(60,t+5)}scene.remove(o.m);items.splice(i,1)}}
+  for(const o of obstacles){let dx=o.position.x-player.position.x,dz=o.position.z-player.position.z;if(dx*dx+dz*dz<2.5){over('Je raakte een obstakel.');break}}
+  if(t<=0)over('De tijd is op.');
+  document.getElementById('time').textContent='00:'+String(Math.max(0,Math.ceil(t))).padStart(2,'0');document.getElementById('score').textContent='Score: '+score;document.getElementById('group').textContent='👥 '+n;
+ }
+ camera.position.x+=(player.position.x-camera.position.x)*.08;camera.position.z=player.position.z+11;camera.lookAt(player.position.x,1,player.position.z-9);renderer.render(scene,camera);
+}
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+requestAnimationFrame(loop);
+</script></body></html>
