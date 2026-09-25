@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Congaline V6</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#111;font-family:Arial,sans-serif;touch-action:none}
+#game{width:100vw;height:100vh;display:block}
+#hud{position:fixed;top:12px;left:50%;transform:translateX(-50%);display:flex;gap:12px;z-index:5;color:#fff;font-weight:800;text-shadow:0 2px 4px #000;pointer-events:none}
+.pill{background:rgba(0,0,0,.48);padding:8px 14px;border-radius:20px}
+#help{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:5;color:#fff;background:rgba(0,0,0,.42);padding:8px 13px;border-radius:18px;font-size:12px;pointer-events:none}
+#overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:10;background:rgba(0,0,0,.5)}
+.card{background:#fff;border-radius:22px;padding:28px;max-width:360px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.35)}
+.card h1{margin:0 0 8px;font-size:30px}.card p{color:#555;line-height:1.4}
+button{border:0;border-radius:14px;background:#111;color:#fff;padding:14px 28px;font-size:17px;font-weight:800;cursor:pointer}
+.small{font-size:12px;color:#777;margin-top:14px}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud"><div class="pill">⏱ <span id="time">60</span></div><div class="pill">👥 <span id="count">1</span></div><div class="pill">⭐ <span id="score">0</span></div></div>
+<div id="help">Swipe / pijltjes: bewegen • Verzamel figuren • Klokken = +5 sec</div>
+<div id="overlay"><div class="card">
+<h1 id="title">CONGALINE V6</h1>
+<p id="desc">Een nieuwe vaste-wereld conga prototype. De route staat in de wereld; niets komt plotseling uit het niets.</p>
+<button id="start">START</button>
+<div class="small">Desktop: WASD / pijltjes • Mobiel: swipe</div>
+</div></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+const canvas=document.getElementById('game');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87a7bd);
+scene.fog=new THREE.Fog(0x87a7bd,45,180);
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.1,300);
+
+const ambient=new THREE.HemisphereLight(0xffffff,0x52606b,1.8); scene.add(ambient);
+const sun=new THREE.DirectionalLight(0xffffff,2.1); sun.position.set(-25,35,20); sun.castShadow=true; scene.add(sun);
+
+const world=new THREE.Group(); scene.add(world);
+const groundMat=new THREE.MeshStandardMaterial({color:0x65785b,roughness:1});
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(70,240),groundMat);
+ground.rotation.x=-Math.PI/2; ground.position.set(0,-.04,-60); ground.receiveShadow=true; world.add(ground);
+
+const roadMat=new THREE.MeshStandardMaterial({color:0x45484a,roughness:1});
+const road=new THREE.Mesh(new THREE.PlaneGeometry(22,230),roadMat);
+road.rotation.x=-Math.PI/2; road.position.set(0,.005,-60); road.receiveShadow=true; world.add(road);
+
+function box(x,y,z,sx,sy,sz,c){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),new THREE.MeshStandardMaterial({color:c}));
+ m.position.set(x,y,z); m.castShadow=true;m.receiveShadow=true;world.add(m);return m;
+}
+function cylinder(x,y,z,r,h,c){
+ const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,12),new THREE.MeshStandardMaterial({color:c}));
+ m.position.set(x,y,z);m.castShadow=true;world.add(m);return m;
+}
+// Fixed side scenery; it never scrolls independently.
+for(let z=0;z>-220;z-=10){
+  cylinder(-15,1.4,z,.75,2.8,0x59665a);
+  cylinder(15,1.4,z-4,.75,2.8,0x59665a);
+  if((Math.abs(z/10)%3)===0){
+    box(-18,1.0,z-3,1.5,2,1.5,0x7b6d5b);
+    box(18,1.0,z-6,1.5,2,1.5,0x7b6d5b);
+  }
+}
+// Curated, visible-ahead obstacle course.
+const obstacles=[];
+const obstacleData=[
+ [-7,-18,3,2,2],[0,-31,2.6,2,2],[7,-43,3,2,2],[-5,-57,2.5,2,2],
+ [5,-70,3,2,2],[0,-83,2.5,2,2],[-7,-96,3,2,2],[6,-110,2.5,2,2],
+ [-3,-124,3,2,2],[7,-139,2.5,2,2],[-6,-153,3,2,2],[0,-168,2.5,2,2],
+ [6,-182,3,2,2],[-5,-197,2.5,2,2]
+];
+for(const [x,z,w,h,d] of obstacleData){
+ const o=box(x,h/2,z,w,h,d,0xb84d3d); obstacles.push({mesh:o,w:w*.62,d:d*.62});
+}
+const collectibles=[];
+function makeCharacter(color,scale=1){
+ const g=new THREE.Group();
+ const body=new THREE.Mesh(new THREE.CapsuleGeometry(.48,.85,4,10),new THREE.MeshStandardMaterial({color}));
+ body.position.y=.82;body.castShadow=true;g.add(body);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.38,14,12),new THREE.MeshStandardMaterial({color:0xf0c29b}));
+ head.position.y=1.58;head.castShadow=true;g.add(head);
+ const nose=new THREE.Mesh(new THREE.ConeGeometry(.12,.32,8),new THREE.MeshStandardMaterial({color:0x222222}));
+ nose.rotation.x=Math.PI/2;nose.position.set(0,1.58,-.35);g.add(nose);
+ g.scale.setScalar(scale); return g;
+}
+const player=makeCharacter(0x2f7eea); player.position.set(0,0,6); world.add(player);
+const followers=[];
+const trail=[]; const MAX_TRAIL=1400;
+let running=false,timeLeft=60,score=0,keys={},last=performance.now(),accum=0;
+let velocity=new THREE.Vector3(0,0,-7), heading=new THREE.Vector3(0,0,-1);
+const spacing=1.65;
+function seedTrail(){
+ trail.length=0;
+ for(let i=0;i<400;i++) trail.push(new THREE.Vector3(player.position.x,0,player.position.z+i*.045));
+}
+seedTrail();
+
+function addCollectible(x,z,type='person'){
+ const g=type==='clock'?new THREE.Group():makeCharacter(0xf0a51b,.8);
+ if(type==='clock'){
+   const ring=new THREE.Mesh(new THREE.TorusGeometry(.52,.13,10,24),new THREE.MeshStandardMaterial({color:0xffd447}));
+   ring.rotation.x=Math.PI/2; g.add(ring);
+   const hand=new THREE.Mesh(new THREE.BoxGeometry(.08,.08,.45),new THREE.MeshStandardMaterial({color:0x222222}));
+   hand.position.y=.08;g.add(hand);
+ }
+ g.position.set(x,.8,z);world.add(g);collectibles.push({mesh:g,type,active:true});
+}
+const collectData=[[-3,-12,'person'],[3,-25,'person'],[-4,-38,'person'],[4,-52,'person'],[0,-64,'clock'],
+ [-6,-77,'person'],[6,-90,'person'],[-3,-104,'person'],[3,-118,'clock'],[-7,-132,'person'],
+ [7,-146,'person'],[-2,-160,'person'],[3,-175,'clock'],[-6,-188,'person'],[5,-203,'person']];
+collectData.forEach(x=>addCollectible(...x));
+
+function resetGame(){
+ player.position.set(0,0,6); heading.set(0,0,-1); velocity.set(0,0,-7);
+ followers.forEach(f=>world.remove(f));followers.length=0;
+ collectibles.forEach(c=>{c.active=true;c.mesh.visible=true});
+ timeLeft=60;score=0;running=true;seedTrail();
+ document.getElementById('overlay').style.display='none'; updateHud();
+}
+function updateHud(){
+ document.getElementById('time').textContent=Math.max(0,Math.ceil(timeLeft));
+ document.getElementById('count').textContent=1+followers.length;
+ document.getElementById('score').textContent=score;
+}
+function gameOver(reason){
+ running=false;
+ document.getElementById('title').textContent='GAME OVER';
+ document.getElementById('desc').textContent=reason+' Score: '+score+' • Figuren: '+(1+followers.length);
+ document.getElementById('start').textContent='OPNIEUW';
+ document.getElementById('overlay').style.display='flex';
+}
+function addFollower(){
+ const f=makeCharacter(0x31b56d,.88);
+ const idx=Math.min(trail.length-1,Math.floor((followers.length+1)*spacing/.045));
+ const p=trail[idx]||new THREE.Vector3(player.position.x,0,player.position.z+2);
+ f.position.copy(p); f.position.y=0; world.add(f); followers.push(f);
+}
+function sampleTrail(){
+ if(trail.length===0 || player.position.distanceTo(trail[0])>.035){
+   trail.unshift(player.position.clone());
+   if(trail.length>MAX_TRAIL)trail.pop();
+ }
+}
+function pathPoint(distance){
+ let d=0;
+ for(let i=0;i<trail.length-1;i++){
+   const a=trail[i],b=trail[i+1]; const seg=a.distanceTo(b);
+   if(d+seg>=distance){
+     const t=(distance-d)/Math.max(seg,.0001);
+     return a.clone().lerp(b,t);
+   }
+   d+=seg;
+ }
+ return trail[trail.length-1]?.clone()||player.position.clone();
+}
+function updateFollowers(dt){
+ followers.forEach((f,i)=>{
+   const target=pathPoint((i+1)*spacing);
+   const pos=new THREE.Vector3(target.x,0,target.z);
+   f.position.lerp(pos,Math.min(1,dt*10));
+   const next=pathPoint((i+1)*spacing+.45);
+   const dir=new THREE.Vector3(next.x-target.x,0,next.z-target.z);
+   if(dir.lengthSq()>.001) f.rotation.y=Math.atan2(dir.x,-dir.z);
+ });
+}
+function collide(a,b,rx=.75,rz=.75){
+ return Math.abs(a.x-b.x)<rx && Math.abs(a.z-b.z)<rz;
+}
+function steer(dt){
+ let x=0,z=-1;
+ if(keys.ArrowLeft||keys.a)x-=1;if(keys.ArrowRight||keys.d)x+=1;
+ if(keys.ArrowUp||keys.w)z-=1;if(keys.ArrowDown||keys.s)z+=1;
+ const input=new THREE.Vector3(x,0,z);
+ if(input.lengthSq()>0) input.normalize();
+ else input.set(0,0,-1);
+ // Continuous world movement, with smooth heading changes.
+ const desired=input.clone().multiplyScalar(7);
+ velocity.lerp(desired,1-Math.pow(.0008,dt));
+ if(velocity.lengthSq()<1)velocity.set(0,0,-1).multiplyScalar(3);
+ heading.lerp(velocity.clone().normalize(),1-Math.pow(.0002,dt));
+ heading.normalize();
+ player.position.addScaledVector(velocity,dt);
+ player.position.x=THREE.MathUtils.clamp(player.position.x,-9.3,9.3);
+ player.rotation.y=Math.atan2(heading.x,-heading.z);
+}
+function cameraUpdate(dt){
+ const forward=heading.clone().normalize();
+ const side=new THREE.Vector3(forward.z,0,-forward.x);
+ const desired=player.position.clone()
+   .addScaledVector(forward,-13)
+   .add(new THREE.Vector3(0,9,0))
+   .addScaledVector(side,0);
+ camera.position.lerp(desired,1-Math.pow(.00001,dt));
+ const look=player.position.clone().addScaledVector(forward,7);look.y=1.0;
+ camera.lookAt(look);
+}
+function tick(now){
+ requestAnimationFrame(tick);
+ const dt=Math.min(.033,(now-last)/1000);last=now;
+ if(running){
+   timeLeft-=dt;if(timeLeft<=0){timeLeft=0;gameOver('De tijd is op.');}
+   else{
+     steer(dt);sampleTrail();updateFollowers(dt);
+     for(const c of collectibles) if(c.active && player.position.distanceTo(c.mesh.position)<1.35){
+       c.active=false;c.mesh.visible=false;
+       if(c.type==='clock')timeLeft+=5;else{addFollower();score+=100;}
+     }
+     for(const o of obstacles){
+       if(collide(player.position,o.mesh.position, o.w+.55,o.d+.55)){gameOver('Je raakte een obstakel.');break;}
+     }
+     // Keep the group away from obstacles too.
+     if(running) for(const f of followers) for(const o of obstacles)
+       if(collide(f.position,o.mesh.position,o.w+.42,o.d+.42)){gameOver('De conga raakte een obstakel.');break;}
+     updateHud();
+   }
+ }
+ cameraUpdate(dt);renderer.render(scene,camera);
+}
+requestAnimationFrame(tick);
+
+window.addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault()});
+window.addEventListener('keyup',e=>keys[e.key]=false);
+let sx=0,sy=0;
+window.addEventListener('touchstart',e=>{const t=e.changedTouches[0];sx=t.clientX;sy=t.clientY},{passive:true});
+window.addEventListener('touchend',e=>{
+ const t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;
+ if(Math.max(Math.abs(dx),Math.abs(dy))<25)return;
+ keys={};
+ if(Math.abs(dx)>Math.abs(dy)) keys[dx>0?'ArrowRight':'ArrowLeft']=true;
+ else keys[dy>0?'ArrowDown':'ArrowUp']=true;
+ setTimeout(()=>keys={},180);
+},{passive:true});
+document.getElementById('start').onclick=resetGame;
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+</script>
+</body>
+</html>
